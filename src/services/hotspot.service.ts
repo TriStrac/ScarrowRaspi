@@ -5,7 +5,7 @@ const execAsync = promisify(exec);
 
 export class HotspotService {
   private static readonly SSID = "SCARROW-CENTRAL-DEVICE";
-  private static readonly PASSWORD = "123456";
+  private static readonly PASSWORD = "12345678";
   private static readonly HOSTAPD_CONF = "/etc/hostapd/hostapd.conf";
   private static readonly DHCPCD_CONF = "/etc/dhcpcd.conf";
 
