@@ -3,7 +3,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
-    "dev": "nodemon --esm src/server.ts",
+    "dev": "node --loader ts-node/esm src/server.ts",
+    "dev:watch": "nodemon --watch src -e ts --exec npm run dev",
     "clean": "rimraf dist"
   },
   "dependencies": {
