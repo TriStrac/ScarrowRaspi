@@ -26,4 +26,7 @@ if (!ConfigService.exists()) {
   console.log("Config found. Skipping AP mode.");
 }
 
-export default app;
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`SCARROW provision server running on port ${PORT}`);
+});
