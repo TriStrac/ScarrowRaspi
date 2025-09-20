@@ -5,32 +5,21 @@ const execAsync = promisify(exec);
 
 export class HotspotService {
   private static readonly SSID = "SCARROW-CENTRAL-DEVICE";
-  private static readonly PASSWORD = "123456";
-  private static readonly HOSTAPD_PATH = "/etc/hostapd";
+  private static readonly PASSWORD = "12345678"; // WPA2 needs at least 8 chars
   private static readonly HOSTAPD_CONF = "/etc/hostapd/hostapd.conf";
   private static readonly DHCPCD_CONF = "/etc/dhcpcd.conf";
+  private static readonly DNSMASQ_CONF = "/etc/dnsmasq.conf";
 
-  private static async ensureHostapdInstalled(): Promise<void> {
-    try {
-      await execAsync("which hostapd");
-    } catch {
-      console.log("Installing hostapd...");
-      await execAsync("sudo apt-get update && sudo apt-get install -y hostapd dnsmasq");
-      await execAsync("sudo systemctl unmask hostapd");
-    }
-  }
-
-  private static async setupHostapdDirectory(): Promise<void> {
-    try {
-      await execAsync(`sudo mkdir -p ${this.HOSTAPD_PATH}`);
-    } catch (err: any) {
-      console.error("Failed to create hostapd directory:", err.message);
-      throw err;
-    }
+  private static async ensureDependenciesInstalled(): Promise<void> {
+    console.log("Installing required packages...");
+    await execAsync("sudo apt-get update -y");
+    await execAsync("sudo apt-get install -y hostapd dnsmasq");
+    await execAsync("sudo systemctl unmask hostapd");
   }
 
   static async configureHostapd(): Promise<void> {
-    const hostapdConfig = `interface=wlan0
+    const hostapdConfig = `
+interface=wlan0
 driver=nl80211
 ssid=${this.SSID}
 hw_mode=g
@@ -42,31 +31,29 @@ ignore_broadcast_ssid=0
 wpa=2
 wpa_passphrase=${this.PASSWORD}
 wpa_key_mgmt=WPA-PSK
-wpa_pairwise=TKIP
-rsn_pairwise=CCMP`;
+rsn_pairwise=CCMP
+`;
 
-    try {
-      await this.ensureHostapdInstalled();
-      await this.setupHostapdDirectory();
-
-      // Configure static IP for AP interface
-      const staticIpConfig = `
+    const staticIpConfig = `
 interface wlan0
     static ip_address=192.168.4.1/24
-    nohook wpa_supplicant`;
+    nohook wpa_supplicant
+`;
 
-      // Update dhcpcd configuration
-      await execAsync(`echo '${staticIpConfig}' | sudo tee -a ${this.DHCPCD_CONF}`);
+    console.log("Configuring hostapd and dhcpcd...");
 
-      // Write the hostapd configuration
-      await execAsync(`echo '${hostapdConfig}' | sudo tee ${this.HOSTAPD_CONF}`);
-      await execAsync(`sudo chmod 600 ${this.HOSTAPD_CONF}`);
+    // Backup before overwriting
+    await execAsync(`sudo cp ${this.DHCPCD_CONF} ${this.DHCPCD_CONF}.bak || true`);
+    await execAsync(`sudo cp ${this.HOSTAPD_CONF} ${this.HOSTAPD_CONF}.bak || true`);
 
-      console.log("Hostapd configuration updated successfully");
-    } catch (err: any) {
-      console.error("Failed to update hostapd configuration:", err.message);
-      throw err;
-    }
+    // Write dhcpcd.conf
+    await execAsync(`echo "${staticIpConfig}" | sudo tee -a ${this.DHCPCD_CONF}`);
+
+    // Write hostapd.conf
+    await execAsync(`echo "${hostapdConfig}" | sudo tee ${this.HOSTAPD_CONF}`);
+    await execAsync(`sudo chmod 600 ${this.HOSTAPD_CONF}`);
+
+    console.log("Hostapd configuration updated successfully");
   }
 
   static async configureDnsmasq(): Promise<void> {
@@ -74,37 +61,43 @@ interface wlan0
 interface=wlan0
 dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
 domain=wlan
-address=/gw.wlan/192.168.4.1`;
+address=/gw.wlan/192.168.4.1
+`;
 
-    try {
-      await execAsync("echo '${dnsmasqConfig}' | sudo tee /etc/dnsmasq.conf");
-      console.log("Dnsmasq configuration updated successfully");
-    } catch (err: any) {
-      console.error("Failed to update dnsmasq configuration:", err.message);
-      throw err;
-    }
+    console.log("Configuring dnsmasq...");
+
+    // Backup before overwriting
+    await execAsync(`sudo cp ${this.DNSMASQ_CONF} ${this.DNSMASQ_CONF}.bak || true`);
+
+    // Write dnsmasq.conf
+    await execAsync(`echo "${dnsmasqConfig}" | sudo tee ${this.DNSMASQ_CONF}`);
+
+    console.log("Dnsmasq configuration updated successfully");
   }
 
   static async start(): Promise<void> {
     try {
-      console.log("Starting hotspot mode...");
+      await this.ensureDependenciesInstalled();
       await this.configureHostapd();
       await this.configureDnsmasq();
-      
-      // Restart networking services
+
+      console.log("Starting hotspot services...");
+
       await execAsync("sudo systemctl restart dhcpcd");
+      await execAsync("sudo ifconfig wlan0 192.168.4.1/24 up");
+
+      await execAsync("sudo systemctl enable dnsmasq");
       await execAsync("sudo systemctl restart dnsmasq");
-      
-      // Enable and start hostapd
+
       await execAsync("sudo systemctl enable hostapd");
-      await execAsync("sudo systemctl start hostapd");
-      
-      console.log("Hotspot started successfully");
+      await execAsync("sudo systemctl restart hostapd");
+
+      console.log("✅ Hotspot started successfully");
       console.log(`SSID: ${this.SSID}`);
       console.log(`Password: ${this.PASSWORD}`);
-      console.log("IP Address: 192.168.4.1");
+      console.log("Gateway IP: 192.168.4.1");
     } catch (err: any) {
-      console.error("Failed to start hotspot:", err.message);
+      console.error("❌ Failed to start hotspot:", err.message);
       throw err;
     }
   }
@@ -115,9 +108,10 @@ address=/gw.wlan/192.168.4.1`;
       await execAsync("sudo systemctl stop hostapd");
       await execAsync("sudo systemctl stop dnsmasq");
       await execAsync("sudo systemctl disable hostapd");
-      console.log("Hotspot stopped successfully");
+      await execAsync("sudo systemctl disable dnsmasq");
+      console.log("✅ Hotspot stopped successfully");
     } catch (err: any) {
-      console.error("Failed to stop hotspot:", err.message);
+      console.error("❌ Failed to stop hotspot:", err.message);
       throw err;
     }
   }
