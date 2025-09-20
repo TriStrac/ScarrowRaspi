@@ -5,7 +5,8 @@ const execAsync = promisify(exec);
 
 export class HotspotService {
   private static readonly SSID = "SCARROW-CENTRAL-DEVICE";
-  private static readonly PASSWORD = "12345678";
+  private static readonly PASSWORD = "12345678"; // must be 8–63 chars
+  private static readonly HOSTAPD_PATH = "/etc/hostapd";
   private static readonly HOSTAPD_CONF = "/etc/hostapd/hostapd.conf";
   private static readonly DHCPCD_CONF = "/etc/dhcpcd.conf";
 
@@ -14,6 +15,10 @@ export class HotspotService {
     await execAsync("sudo apt-get update");
     await execAsync("sudo apt-get install -y hostapd dnsmasq");
     await execAsync("sudo systemctl unmask hostapd");
+  }
+
+  private static async setupHostapdDirectory(): Promise<void> {
+    await execAsync(`sudo mkdir -p ${this.HOSTAPD_PATH}`);
   }
 
   static async configureHostapd(): Promise<void> {
@@ -32,7 +37,16 @@ wpa_key_mgmt=WPA-PSK
 wpa_pairwise=TKIP
 rsn_pairwise=CCMP`;
 
-    // Write hostapd.conf
+    // Configure static IP for AP interface
+    const staticIpConfig = `
+interface wlan0
+    static ip_address=192.168.4.1/24
+    nohook wpa_supplicant`;
+
+    await this.ensureDependenciesInstalled();
+    await this.setupHostapdDirectory();
+
+    await execAsync(`echo '${staticIpConfig}' | sudo tee -a ${this.DHCPCD_CONF}`);
     await execAsync(`echo '${hostapdConfig}' | sudo tee ${this.HOSTAPD_CONF}`);
     await execAsync(`sudo chmod 600 ${this.HOSTAPD_CONF}`);
 
@@ -46,26 +60,33 @@ dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
 domain=wlan
 address=/gw.wlan/192.168.4.1`;
 
-    await execAsync(`echo "${dnsmasqConfig}" | sudo tee /etc/dnsmasq.conf`);
+    await execAsync(`echo '${dnsmasqConfig}' | sudo tee /etc/dnsmasq.conf`);
     console.log("Dnsmasq configuration updated successfully");
   }
 
   static async start(): Promise<void> {
     try {
       console.log("Starting hotspot mode...");
-      await this.ensureDependenciesInstalled();
+
+      // 🔴 Kill wpa_supplicant so wlan0 is free for AP mode
+      console.log("Stopping wpa_supplicant...");
+      await execAsync("sudo systemctl stop wpa_supplicant || true");
+
+      // Make sure wlan0 is reset
+      await execAsync("sudo ip link set wlan0 down || true");
+      await execAsync("sudo ip link set wlan0 up || true");
+
       await this.configureHostapd();
       await this.configureDnsmasq();
 
       // Assign static IP to wlan0
-      await execAsync("sudo ip addr add 192.168.4.1/24 dev wlan0 || true");
-      await execAsync("sudo ip link set wlan0 up");
+      await execAsync("sudo ifconfig wlan0 192.168.4.1/24 up");
 
       // Start services
-      await execAsync("sudo systemctl restart dnsmasq");
       await execAsync("sudo systemctl enable dnsmasq");
-      await execAsync("sudo systemctl restart hostapd");
+      await execAsync("sudo systemctl restart dnsmasq");
       await execAsync("sudo systemctl enable hostapd");
+      await execAsync("sudo systemctl restart hostapd");
 
       console.log("✅ Hotspot started successfully");
       console.log(`SSID: ${this.SSID}`);
@@ -78,11 +99,19 @@ address=/gw.wlan/192.168.4.1`;
   }
 
   static async stop(): Promise<void> {
-    console.log("Stopping hotspot mode...");
-    await execAsync("sudo systemctl stop hostapd || true");
-    await execAsync("sudo systemctl stop dnsmasq || true");
-    await execAsync("sudo systemctl disable hostapd || true");
-    await execAsync("sudo systemctl disable dnsmasq || true");
-    console.log("✅ Hotspot stopped successfully");
+    try {
+      console.log("Stopping hotspot mode...");
+      await execAsync("sudo systemctl stop hostapd || true");
+      await execAsync("sudo systemctl stop dnsmasq || true");
+      await execAsync("sudo systemctl disable hostapd || true");
+      console.log("Hotspot stopped successfully");
+
+      // Restart wpa_supplicant so normal Wi-Fi works again
+      console.log("Restarting wpa_supplicant...");
+      await execAsync("sudo systemctl start wpa_supplicant || true");
+    } catch (err: any) {
+      console.error("❌ Failed to stop hotspot:", err.message);
+      throw err;
+    }
   }
 }
