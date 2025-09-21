@@ -20,11 +20,10 @@ export const BT_CONFIG: BluetoothConfig = {
     RESULT_UNLIKELY_ERROR: 0x0E
 };
 
-export const BT_CONFIG: BluetoothConfig = {
-    deviceName: "SCARROW-CENTRAL-DEVICE",
-    serviceUuid: "12345678-1234-5678-1234-56789abcdef9",
-    characteristics: {
-        deviceIdUuid: "12345678-1234-5678-1234-56789abcdef0",
-        wifiCredsUuid: "12345678-1234-5678-1234-56789abcdef1"
-    }
-};
+export type BlenoCallback = (error?: string | null) => void;
+export type WriteCallback = (result: number) => void;
+export type BlenoState = "unknown" | "resetting" | "unsupported" | "unauthorized" | "poweredOff" | "poweredOn";
+export type OnWriteRequest = (data: Buffer, offset: number, withoutResponse: boolean, callback: WriteCallback) => void;
+export type StateChangeCallback = (state: BlenoState) => void;
+export type AddressCallback = (clientAddress: string) => void;
+export type ErrorCallback = (error?: Error | null) => void;
