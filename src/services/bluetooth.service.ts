@@ -1,5 +1,7 @@
 import bleno from "@abandonware/bleno";
 import { WifiService } from "./wifi.service";
+import { exec } from "child_process";
+import { promisify } from "util";
 
 const DEVICE_ID_UUID = "12345678-1234-5678-1234-56789abcdef0";
 const WIFI_CREDS_UUID = "12345678-1234-5678-1234-56789abcdef1";
@@ -18,17 +20,27 @@ let deviceId = "";
 let wifiCreds: { ssid: string; password: string } | null = null;
 
 export class BluetoothService {
-  static start() {
-    // Set security level before any other operations
+  private static async initializeBluetooth(): Promise<void> {
+    const execAsync = promisify(exec);
     try {
-      // Disable security - this must be done before any other bleno operations
+      // Reset Bluetooth adapter
+      await execAsync('sudo hciconfig hci0 down');
+      await execAsync('sudo hciconfig hci0 up');
+      
+      // Disable automatic pairing
+      await execAsync('sudo btmgmt pairable off');
+      await execAsync('sudo btmgmt bondable off');
+      
+      // Set security level to none/low
       process.env.BLENO_DEVICE_NAME = "SCARROW-CENTRAL-DEVICE";
-      (bleno as any).Characteristic.RESULT_SUCCESS = 0;
-      (bleno as any).Characteristic.RESULT_UNLIKELY_ERROR = 1;
-      (bleno as any).setSecurityLevel?.("low");
+      process.env.BLENO_ADVERTISING_INTERVAL = "100";
     } catch (err) {
-      console.log("Note: Security level setting not supported");
+      console.log("Note: Some Bluetooth initialization commands failed, continuing anyway...");
     }
+  }
+
+  static async start() {
+    await this.initializeBluetooth();
 
     bleno.on("stateChange", (state: BlenoState) => {
       if (state === "poweredOn") {
@@ -59,7 +71,8 @@ export class BluetoothService {
           characteristics: [
             new bleno.Characteristic({
               uuid: DEVICE_ID_UUID,
-              properties: ["write", "notify"],
+              properties: ["write", "writeWithoutResponse"],
+              secure: [],
               onWriteRequest: (
                 data: Buffer,
                 offset: number,
@@ -74,7 +87,8 @@ export class BluetoothService {
 
             new bleno.Characteristic({
               uuid: WIFI_CREDS_UUID,
-              properties: ["write", "notify"],
+              properties: ["write", "writeWithoutResponse"],
+              secure: [],
               onWriteRequest: async (
                 data: Buffer,
                 offset: number,
