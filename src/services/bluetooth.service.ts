@@ -30,26 +30,32 @@ export class BluetoothService {
             await execAsync("sudo systemctl start bluetooth");
             await execAsync("sleep 2"); // Give bluetooth service time to start
             
-            // Configure using bluetoothctl
-            console.log("📱 Configuring Bluetooth for pairing...");
-            const commands = [
+            // First, remove any existing pairings
+            await execAsync("sudo rm -rf /var/lib/bluetooth/*");
+            await execAsync("sudo systemctl restart bluetooth");
+            await execAsync("sleep 2");
+            
+            // Create a script with all the bluetoothctl commands
+            const script = [
                 "power on",
-                "agent on",
+                "agent NoInputNoOutput", // This is key - no confirmation needed
                 "default-agent",
                 `rename ${BT_CONFIG.deviceName}`,
                 "discoverable on",
-                "pairable on"
-            ];
+                "pairable on",
+                "trust *", // Auto-trust any device that tries to pair
+                "yes" // Auto-confirm any pairing request
+            ].join("\\n");
             
-            // Execute each bluetoothctl command
-            for (const cmd of commands) {
-                await execAsync(`echo "${cmd}" | sudo bluetoothctl`);
-                await execAsync("sleep 1"); // Give each command time to take effect
-            }
+            // Execute all commands at once in bluetoothctl
+            await execAsync(`echo -e "${script}" | sudo bluetoothctl`);
+            
+            // Start the automatic pairing agent in the background
+            await execAsync("sudo bt-agent --capability=NoInputNoOutput --auto-confirm=true &");
             
             console.log("✅ Bluetooth setup complete - Ready for pairing");
             console.log("📱 Device name:", BT_CONFIG.deviceName);
-            console.log("🔵 Discoverable and pairable - You can now connect from your phone");
+            console.log("🔵 Auto-accepting all pairing requests");
         } catch (error) {
             console.error("❌ Error in Bluetooth setup:", error);
             throw error;
