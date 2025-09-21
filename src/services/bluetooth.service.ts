@@ -1,4 +1,48 @@
-import bleno from "@abandonware/bleno";
+import bleno from "@aban    private a    private async setupBluetooth() {
+        try {
+            console.log("🔄 Setting up Bluetooth...");
+            
+            // Stop bluetooth service to get full control
+            await execAsync("sudo systemctl stop bluetooth");
+            
+            // Reset and configure adapter
+            await execAsync("sudo hciconfig hci0 down");
+            await execAsync("sudo hciconfig hci0 up");
+            await execAsync("sudo hciconfig hci0 reset");
+            await execAsync(`sudo hciconfig hci0 name "${BT_CONFIG.deviceName}"`);
+            
+            // Configure using btmgmt (more reliable than hciconfig)
+            await execAsync("sudo btmgmt power off");
+            await execAsync("sudo btmgmt le on");
+            await execAsync("sudo btmgmt connectable on");
+            await execAsync("sudo btmgmt discov on");
+            await execAsync("sudo btmgmt power on");
+            
+            // Set advertising parameters using hcitool
+            try {
+                // Set advertising parameters (100ms interval)
+                await execAsync("sudo hcitool -i hci0 cmd 0x08 0x0006 20 00 20 00 00 00 00 00 00 00 00 00 00 07 00");
+                // Enable advertising
+                await execAsync("sudo hcitool -i hci0 cmd 0x08 0x000a 01");
+            } catch (error) {
+                console.log("Note: Some advertising parameters not supported - this is normal");
+            }
+            
+            console.log("✅ Bluetooth setup complete");
+        }etooth() {
+        try {
+            // Reset adapter and configure BLE adapter
+            await execAsync("sudo hciconfig hci0 down");
+            await execAsync("sudo hciconfig hci0 up");
+            await execAsync("sudo hciconfig hci0 name SCARROW-CENTRAL-DEVICE");
+            await execAsync("sudo btmgmt le on"); // Enable BLE
+            await execAsync("sudo btmgmt bredr off"); // Disable classic Bluetooth
+            await execAsync("sudo btmgmt power on"); // Ensure powered on
+            await execAsync("sudo btmgmt connectable on");
+            await execAsync("sudo btmgmt discov on"); // Make discoverable
+            // Set LE advertisement parameters for maximum visibility
+            await execAsync("sudo hcitool -i hci0 cmd 0x08 0x0006 A0 00 A0 00 00 00 00 00 00 00 00 00 00 07 00"); // 100ms interval
+            await execAsync("sudo hcitool -i hci0 cmd 0x08 0x0008 1F 02 01 06 1B FF 4C 00 02 15 FF 51 B3 0E D7 E2 4D 93 88 42 A7 C4 A5 7D FB 10 00 00 00 00 C5"); // Set advertisement data";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { WifiService } from "./wifi.service";
@@ -99,12 +143,6 @@ export class BluetoothService {
         try {
             const { stdout } = await execAsync("hciconfig hci0");
             console.log("🔍 Bluetooth adapter status:", stdout);
-            
-            const { stdout: devices } = await execAsync("sudo hcitool dev");
-            console.log("📱 Available Bluetooth devices:", devices);
-            
-            const { stdout: scan } = await execAsync("sudo hcitool lescan --duplicates");
-            console.log("🔎 BLE scan results:", scan);
         } catch (error) {
             console.error("❌ Error checking Bluetooth status:", error);
         }
