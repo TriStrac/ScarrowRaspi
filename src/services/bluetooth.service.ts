@@ -26,11 +26,15 @@ export class BluetoothService {
         try {
             console.log("🔄 Setting up Bluetooth...");
             
-            // Kill any existing bluetooth processes
+            // Kill any existing bluetooth processes (ignore errors if processes don't exist)
             console.log("Cleaning up existing bluetooth processes...");
-            await execAsync("sudo pkill -f bt-agent");
-            await execAsync("sudo pkill -f bluetoothd");
-            await execAsync("sleep 2");
+            try {
+                await execAsync("sudo pkill -f bt-agent || true");
+                await execAsync("sudo pkill -f bluetoothd || true");
+                await execAsync("sleep 2");
+            } catch (error) {
+                console.log("Note: No existing processes found to clean up");
+            }
             
             // Start fresh bluetooth service
             console.log("Starting bluetooth service...");
@@ -182,22 +186,31 @@ done`;
             // First attempt
             console.log("First attempt at Bluetooth setup...");
             await this.setupBluetooth();
-        } catch (error) {
-            console.error("First attempt failed:", error);
-            console.log("Waiting 5 seconds before retry...");
+        } catch (error: any) {
+            // Only retry on specific errors that might be resolved by a retry
+            const shouldRetry = error?.cmd?.includes('bluetoothctl') || 
+                              error?.message?.includes('bluetooth');
             
-            try {
-                // Kill everything and wait
-                await execAsync("sudo pkill -f bt-agent");
-                await execAsync("sudo pkill -f bluetoothd");
-                await execAsync("sleep 5");
+            if (shouldRetry) {
+                console.error("First attempt failed with recoverable error:", error);
+                console.log("Waiting 5 seconds before retry...");
                 
-                // Second attempt
-                console.log("Second attempt at Bluetooth setup...");
-                await this.setupBluetooth();
-            } catch (retryError) {
-                console.error("Both setup attempts failed. Final error:", retryError);
-                throw retryError;
+                try {
+                    // Clean up processes (ignore errors)
+                    await execAsync("sudo pkill -f bt-agent || true");
+                    await execAsync("sudo pkill -f bluetoothd || true");
+                    await execAsync("sleep 5");
+                    
+                    // Second attempt
+                    console.log("Second attempt at Bluetooth setup...");
+                    await this.setupBluetooth();
+                } catch (retryError) {
+                    console.error("Both setup attempts failed. Final error:", retryError);
+                    throw retryError;
+                }
+            } else {
+                // For non-bluetooth related errors, just throw immediately
+                throw error;
             }
         }
 
