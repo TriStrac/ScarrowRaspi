@@ -20,9 +20,10 @@ app.get("/status", (req, res) => {
 
 // Check config on startup → start Bluetooth if missing
 if (!ConfigService.exists()) {
-  // Initialize Bluetooth service singleton
-  const bluetoothService = BluetoothService.getInstance();
-  console.log("🔵 Bluetooth pairing mode activated");
+  console.log("🔵 Starting Bluetooth service for initial setup...");
+  BluetoothService.getInstance().start().catch(err => {
+    console.error("❌ Failed to start Bluetooth service:", err);
+  });
 } else {
   console.log("✅ Config found. Skipping Bluetooth pairing mode.");
 }

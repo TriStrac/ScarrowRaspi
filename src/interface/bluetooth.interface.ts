@@ -10,7 +10,7 @@ export interface BluetoothConfig {
 }
 
 export const BT_CONFIG: BluetoothConfig = {
-    deviceName: "ScarrowRaspi",
+    deviceName: "SCARROW-CENTRAL-DEVICE",
     serviceUuid: "ff51b30e-d7e2-4d93-8842-a7c4a57dfb10",
     characteristics: {
         deviceIdUuid: "ff51b31e-d7e2-4d93-8842-a7c4a57dfb10",
@@ -18,13 +18,4 @@ export const BT_CONFIG: BluetoothConfig = {
     },
     RESULT_SUCCESS: 0,
     RESULT_UNLIKELY_ERROR: 0x0E
-};
-
-export const BT_CONFIG: BluetoothConfig = {
-    deviceName: "SCARROW-CENTRAL-DEVICE",
-    serviceUuid: "12345678-1234-5678-1234-56789abcdef9",
-    characteristics: {
-        deviceIdUuid: "12345678-1234-5678-1234-56789abcdef0",
-        wifiCredsUuid: "12345678-1234-5678-1234-56789abcdef1"
-    }
 };
