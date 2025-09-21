@@ -1,247 +1,131 @@
-/**
- * Bluetooth Low Energy (BLE) service for device configuration
- * Handles device ID setting and WiFi credentials
- */
 import bleno from "@abandonware/bleno";
 import { WifiService } from "./wifi.service";
 import { exec } from "child_process";
 import { promisify } from "util";
-import {
-    BlenoState,
-    WifiCredentials,
-    DEVICE_ID_UUID,
-    WIFI_CREDS_UUID,
-    SERVICE_UUID,
-    RESULT_SUCCESS,
-    RESULT_INVALID_OFFSET,
-    RESULT_INVALID_ATTRIBUTE_LENGTH,
-    RESULT_UNLIKELY_ERROR
-} from "../interface";
 
-// Store data globally to persist between connections
+const DEVICE_ID_UUID = "12345678-1234-5678-1234-56789abcdef0";
+const WIFI_CREDS_UUID = "12345678-1234-5678-1234-56789abcdef1";
+const SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef9";
+
+// Type definitions to help with TypeScript
+type BlenoState = "unknown" | "resetting" | "unsupported" | "unauthorized" | "poweredOff" | "poweredOn";
+type WriteCallback = (result: number) => void;
+interface WriteRequest {
+  offset: number;
+  data: Buffer;
+  withoutResponse: boolean;
+}
+
 let deviceId = "";
-let wifiCreds: WifiCredentials | null = null;
+let wifiCreds: { ssid: string; password: string } | null = null;
 
-// Base class for BLE characteristics with result codes
-abstract class CustomCharacteristic extends bleno.Characteristic {
-    protected readonly RESULT_SUCCESS = RESULT_SUCCESS;
-    protected readonly RESULT_INVALID_OFFSET = RESULT_INVALID_OFFSET;
-    protected readonly RESULT_INVALID_ATTRIBUTE_LENGTH = RESULT_INVALID_ATTRIBUTE_LENGTH;
-    protected readonly RESULT_UNLIKELY_ERROR = RESULT_UNLIKELY_ERROR;
-
-    constructor(options: { uuid: string; properties: string[] }) {
-        super(options);
-    }
-}
-
-// Characteristic for handling device ID
-class DeviceIdCharacteristic extends CustomCharacteristic {
-    constructor() {
-        super({
-            uuid: DEVICE_ID_UUID,
-            properties: ["read", "write", "writeWithoutResponse"],
-        });
-    }
-
-    onReadRequest(_offset: number, callback: (result: number, data?: Buffer) => void): void {
-        const data = Buffer.from(deviceId || "");
-        callback(this.RESULT_SUCCESS, data);
-    }
-
-    onWriteRequest(data: Buffer, _offset: number, _withoutResponse: boolean, callback: (result: number) => void): void {
-        try {
-            deviceId = data.toString("utf8");
-            console.log("📲 Received Device ID:", deviceId);
-            callback(this.RESULT_SUCCESS);
-        } catch (error) {
-            console.error("Error writing device ID:", error);
-            callback(this.RESULT_UNLIKELY_ERROR);
-        }
-    }
-}
-
-// Characteristic for handling WiFi credentials
-class WifiCredsCharacteristic extends CustomCharacteristic {
-    constructor() {
-        super({
-            uuid: WIFI_CREDS_UUID,
-            properties: ["write", "writeWithoutResponse"],
-        });
-    }
-
-    async onWriteRequest(data: Buffer, _offset: number, _withoutResponse: boolean, callback: (result: number) => void): Promise<void> {
-        try {
-            const credsString = data.toString("utf8");
-            const parsedCreds = JSON.parse(credsString);
-            wifiCreds = { ssid: parsedCreds.ssid, password: parsedCreds.password };
-            console.log("📶 Received WiFi Credentials for SSID:", wifiCreds.ssid);
-
-            // Connect to WiFi using the static connect method
-            await WifiService.connect(wifiCreds.ssid, wifiCreds.password);
-            console.log("✅ WiFi Connected!");
-
-            callback(this.RESULT_SUCCESS);
-        } catch (error) {
-            console.error("❌ WiFi connection failed:", error);
-            callback(this.RESULT_UNLIKELY_ERROR);
-        }
-    }
-}
-
-// Main Bluetooth service class
 export class BluetoothService {
-    private static _instance: BluetoothService | null = null;
-    private isAdvertising = false;
-
-    private constructor() {
-        this.setupBlenoEventHandlers();
+  private static async initializeBluetooth(): Promise<void> {
+    const execAsync = promisify(exec);
+    try {
+      // Reset Bluetooth adapter
+      await execAsync('sudo hciconfig hci0 down');
+      await execAsync('sudo hciconfig hci0 up');
+      
+      // Disable automatic pairing
+      await execAsync('sudo btmgmt pairable off');
+      await execAsync('sudo btmgmt bondable off');
+      
+      // Set security level to none/low
+      process.env.BLENO_DEVICE_NAME = "SCARROW-CENTRAL-DEVICE";
+      process.env.BLENO_ADVERTISING_INTERVAL = "100";
+    } catch (err) {
+      console.log("Note: Some Bluetooth initialization commands failed, continuing anyway...");
     }
+  }
 
-    public static getInstance(): BluetoothService {
-        if (!BluetoothService._instance) {
-            BluetoothService._instance = new BluetoothService();
-        }
-        return BluetoothService._instance;
-    }
+  static async start() {
+    await this.initializeBluetooth();
 
-    private async setupBlenoEventHandlers(): Promise<void> {
-        // Initialize Bluetooth first
-        await this.initializeBluetooth();
-
-        bleno.on("stateChange", async (state: BlenoState) => {
-            console.log(`Bluetooth state changed to: ${state}`);
-            
-            if (state === "poweredOn" && !this.isAdvertising) {
-                await this.startAdvertising();
-            } else {
-                this.isAdvertising = false;
-                bleno.stopAdvertising();
-            }
+    bleno.on("stateChange", (state: BlenoState) => {
+      if (state === "poweredOn") {
+        console.log("🚀 BLE powered on, starting advertising...");
+        bleno.startAdvertising("SCARROW-CENTRAL-DEVICE", [SERVICE_UUID], (err: Error | null) => {
+          if (err) {
+            console.error("Failed to start advertising:", err);
+            return;
+          }
         });
+      } else {
+        console.log("⚠️ BLE not powered on:", state);
+        bleno.stopAdvertising();
+      }
+    });
 
-        bleno.on("advertisingStart", async (error?: Error) => {
-            if (error) {
-                console.error("Failed to start advertising:", error);
-                return;
-            }
+    bleno.on("advertisingStart", (err: Error | null) => {
+      if (err) {
+        console.error("❌ Advertising start error:", err);
+        return;
+      }
+      console.log("✅ Advertising started.");
 
-            console.log("✅ Advertising started successfully");
-            this.isAdvertising = true;
-            
-            try {
-                await this.setupServices();
-            } catch (err) {
-                console.error("Failed to setup services:", err);
-            }
-        });
+      // Set services
+      bleno.setServices([
+        new bleno.PrimaryService({
+          uuid: SERVICE_UUID,
+          characteristics: [
+            new bleno.Characteristic({
+              uuid: DEVICE_ID_UUID,
+              properties: ["write", "writeWithoutResponse"],
+              secure: [],
+              onWriteRequest: (
+                data: Buffer,
+                offset: number,
+                withoutResponse: boolean,
+                callback: WriteCallback
+              ) => {
+                deviceId = data.toString("utf8");
+                console.log("📲 Received Device ID:", deviceId);
+                callback(bleno.Characteristic.RESULT_SUCCESS);
+              },
+            }),
 
-        bleno.on("accept", (clientAddress: string) => {
-            console.log(`🔗 Central connected: ${clientAddress}`);
-        });
+            new bleno.Characteristic({
+              uuid: WIFI_CREDS_UUID,
+              properties: ["write", "writeWithoutResponse"],
+              secure: [],
+              onWriteRequest: async (
+                data: Buffer,
+                offset: number,
+                withoutResponse: boolean,
+                callback: WriteCallback
+              ) => {
+                try {
+                  const creds = JSON.parse(data.toString("utf8"));
+                  wifiCreds = { ssid: creds.ssid, password: creds.password };
+                  console.log("📶 Received WiFi Credentials:", wifiCreds);
 
-        bleno.on("disconnect", (clientAddress: string) => {
-            console.log(`❌ Central disconnected: ${clientAddress}`);
-            // Restart advertising after client disconnects
-            this.startAdvertising().catch(console.error);
-        });
+                  // Connect to WiFi
+                  await WifiService.connect(wifiCreds.ssid, wifiCreds.password);
+                  console.log("✅ WiFi Connected!");
 
-        bleno.on("error", (error: Error) => {
-            console.error("❌ Bluetooth error:", error);
-            this.restartAdvertising().catch(console.error);
-        });
-    }
-
-    private async initializeBluetooth(): Promise<void> {
-        const execAsync = promisify(exec);
-        try {
-            console.log("🔄 Initializing Bluetooth...");
-            
-            // Stop any existing processes
-            await execAsync('sudo systemctl stop bluetooth');
-            
-            // Reset Bluetooth adapter
-            await execAsync('sudo hciconfig hci0 down');
-            await execAsync('sudo hciconfig hci0 up');
-            
-            // Start bluetooth service
-            await execAsync('sudo systemctl start bluetooth');
-            
-            // Make device discoverable and disable security
-            await execAsync('sudo hciconfig hci0 piscan');
-            await execAsync('sudo hciconfig hci0 sspmode 0');
-            
-            // Set advertising parameters for better discovery
-            process.env.BLENO_DEVICE_NAME = "ScarrowRaspi";
-            process.env.BLENO_ADVERTISING_INTERVAL = "20";
-
-            // Disable security pairing (skip SMP)
-            (bleno as any).setSecurityLevel?.("low");
-
-            console.log("✅ Bluetooth initialized successfully");
-        } catch (err) {
-            console.error("⚠️ Some Bluetooth initialization commands failed:", err);
-        }
-    }
-
-    private async startAdvertising(): Promise<void> {
-        if (this.isAdvertising) {
-            console.log("Already advertising, stopping first...");
-            bleno.stopAdvertising();
-        }
-
-        console.log("📢 Starting advertising...");
-        const advertisementData = Buffer.from("0201061107" + SERVICE_UUID.replace(/-/g, ""), "hex");
-        bleno.startAdvertisingWithEIRData(advertisementData);
-    }
-
-    private async setupServices(): Promise<void> {
-        const deviceIdCharacteristic = new DeviceIdCharacteristic();
-        const wifiCredsCharacteristic = new WifiCredsCharacteristic();
-
-        const primaryService = new bleno.PrimaryService({
-            uuid: SERVICE_UUID,
-            characteristics: [
-                deviceIdCharacteristic,
-                wifiCredsCharacteristic
-            ]
-        });
-
-        await new Promise<void>((resolve, reject) => {
-            bleno.setServices([primaryService], (error?: Error) => {
-                if (error) {
-                    console.error("Error setting services:", error);
-                    reject(error);
-                } else {
-                    console.log("✅ Services set successfully");
-                    resolve();
+                  callback(bleno.Characteristic.RESULT_SUCCESS);
+                } catch (err) {
+                  console.error("❌ WiFi connection failed:", err);
+                  callback(bleno.Characteristic.RESULT_UNLIKELY_ERROR);
                 }
-            });
-        });
-    }
+              },
+            }),
+          ],
+        }),
+      ]);
+    });
 
-    private async restartAdvertising(): Promise<void> {
-        console.log("🔄 Restarting advertising...");
-        
-        if (this.isAdvertising) {
-            bleno.stopAdvertising();
-            this.isAdvertising = false;
-        }
+    // Log connections/disconnections
+    bleno.on("accept", (clientAddress: string) => {
+      console.log(`🔗 Central connected: ${clientAddress}`);
+    });
 
-        await this.startAdvertising();
-    }
+    bleno.on("disconnect", (clientAddress: string) => {
+      console.log(`❌ Central disconnected: ${clientAddress}`);
+    });
 
-    public async stop(): Promise<void> {
-        if (this.isAdvertising) {
-            bleno.stopAdvertising();
-            this.isAdvertising = false;
-        }
-    }
-
-    public getDeviceId(): string {
-        return deviceId;
-    }
-
-    public getWifiCreds(): { ssid: string; password: string } | null {
-        return wifiCreds;
-    }
+    // Disable security pairing (skip SMP) to avoid length errors
+    (bleno as any).setSecurityLevel?.("low"); // optional if TS complains
+  }
 }
