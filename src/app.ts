@@ -2,7 +2,7 @@ import express from "express";
 import bodyParser from "body-parser";
 import pairRoutes from "./routes/pair.routes";
 import wifiRoutes from "./routes/wifi.routes";
-import { ConfigService, HotspotService } from "./services";
+import { ConfigService, BluetoothService } from "./services";
 
 const app = express();
 app.use(bodyParser.json());
@@ -18,15 +18,14 @@ app.get("/status", (req, res) => {
   });
 });
 
-// Check config on startup → start AP if missing
+// Check config on startup → start Bluetooth if missing
 if (!ConfigService.exists()) {
-  HotspotService.start()
-    .catch(err => console.error("Failed to start hotspot:", err));
+  BluetoothService.start();
 } else {
-  console.log("Config found. Skipping AP mode.");
+  console.log("✅ Config found. Skipping Bluetooth pairing mode.");
 }
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`SCARROW provision server running on port ${PORT}`);
+  console.log(`🚀 SCARROW provision server running on port ${PORT}`);
 });
