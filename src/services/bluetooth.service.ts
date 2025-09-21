@@ -65,12 +65,12 @@ export class BluetoothService {
 
         bleno.on("stateChange", (state: BlenoState) => {
             console.log("🔄 Bluetooth state:", state);
-
-            if (state === "poweredOn" && !this.isAdvertising) {
-                this.isAdvertising = true;
+            if (state === "poweredOn") {
                 bleno.startAdvertising(BT_CONFIG.deviceName, [BT_CONFIG.serviceUuid]);
-            } else if (state !== "poweredOn") {
-                this.stopAdvertising();
+                // Disable security / pairing
+                (bleno as any).setSecurityLevel?.("low");
+            } else {
+                bleno.stopAdvertising();
             }
         });
 
