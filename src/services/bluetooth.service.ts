@@ -26,35 +26,33 @@ export class BluetoothService {
         try {
             console.log("🔄 Setting up Bluetooth...");
             
-            // Stop bluetooth service to get full control
-            await execAsync("sudo systemctl stop bluetooth");
+            // Start bluetooth service
+            await execAsync("sudo systemctl start bluetooth");
+            await execAsync("sleep 2"); // Give bluetooth service time to start
             
-            // Reset and configure adapter
-            await execAsync("sudo hciconfig hci0 down");
-            await execAsync("sudo hciconfig hci0 up");
-            await execAsync("sudo hciconfig hci0 reset");
-            await execAsync(`sudo hciconfig hci0 name "${BT_CONFIG.deviceName}"`);
+            // Configure using bluetoothctl
+            console.log("📱 Configuring Bluetooth for pairing...");
+            const commands = [
+                "power on",
+                "agent on",
+                "default-agent",
+                `rename ${BT_CONFIG.deviceName}`,
+                "discoverable on",
+                "pairable on"
+            ];
             
-            // Configure using btmgmt
-            await execAsync("sudo btmgmt power off");
-            await execAsync("sudo btmgmt le on");
-            await execAsync("sudo btmgmt connectable on");
-            await execAsync("sudo btmgmt discov on");
-            await execAsync("sudo btmgmt power on");
-            
-            // Set advertising parameters using hcitool
-            try {
-                // Set advertising parameters (100ms interval)
-                await execAsync("sudo hcitool -i hci0 cmd 0x08 0x0006 20 00 20 00 00 00 00 00 00 00 00 00 00 07 00");
-                // Enable advertising
-                await execAsync("sudo hcitool -i hci0 cmd 0x08 0x000a 01");
-            } catch (error) {
-                console.log("Note: Some advertising parameters not supported - this is normal");
+            // Execute each bluetoothctl command
+            for (const cmd of commands) {
+                await execAsync(`echo "${cmd}" | sudo bluetoothctl`);
+                await execAsync("sleep 1"); // Give each command time to take effect
             }
             
-            console.log("✅ Bluetooth setup complete");
+            console.log("✅ Bluetooth setup complete - Ready for pairing");
+            console.log("📱 Device name:", BT_CONFIG.deviceName);
+            console.log("🔵 Discoverable and pairable - You can now connect from your phone");
         } catch (error) {
             console.error("❌ Error in Bluetooth setup:", error);
+            throw error;
         }
     }
 
@@ -113,28 +111,24 @@ export class BluetoothService {
     }
 
     public async start() {
-        // Set shorter advertising interval for better visibility
-        process.env.BLENO_ADVERTISING_INTERVAL = "100";
-        process.env.NOBLE_REPORT_ALL_HCI_EVENTS = "1"; // Enable all HCI events for debugging
-
         console.log("🚀 Starting Bluetooth service...");
-        await this.setupBluetooth();
+        
+        try {
+            await this.setupBluetooth();
+        } catch (error) {
+            console.error("Failed to setup Bluetooth. Retrying in 5 seconds...");
+            // Wait 5 seconds and try again
+            await execAsync("sleep 5");
+            await this.setupBluetooth();
+        }
 
         bleno.on("stateChange", async (state: BlenoState) => {
             console.log("🔄 Bluetooth state:", state);
             
             if (state === "poweredOn" && !this.isAdvertising) {
-                console.log("🔵 Starting BLE advertising...");
+                console.log("🔵 Starting service advertisement...");
                 this.isAdvertising = true;
-                
-                // Start advertising with proper configuration
-                const advertisementData = Buffer.from([
-                    0x02, 0x01, 0x06, // Flags: LE General Discoverable + BR/EDR Not Supported
-                    BT_CONFIG.deviceName.length + 1, 0x09, ...Buffer.from(BT_CONFIG.deviceName), // Complete Local Name
-                    17, 0x07, ...Buffer.from(BT_CONFIG.serviceUuid.replace(/-/g, ''), 'hex') // Complete 128-bit Service UUIDs
-                ]);
-
-                bleno.startAdvertisingWithEIRData(advertisementData);
+                bleno.startAdvertising(BT_CONFIG.deviceName, [BT_CONFIG.serviceUuid]);
             } else if (state !== "poweredOn") {
                 console.log("❌ Bluetooth not powered on, stopping advertising");
                 this.stopAdvertising();
