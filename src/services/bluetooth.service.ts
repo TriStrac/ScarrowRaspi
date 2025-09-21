@@ -15,52 +15,63 @@ export class BluetoothService {
         console.log("🚀 Starting BLE...");
         bleno.startAdvertising("SCARROW-CENTRAL-DEVICE", [SERVICE_UUID]);
       } else {
+        console.log("⚠️ BLE not powered on:", state);
         bleno.stopAdvertising();
       }
     });
 
     bleno.on("advertisingStart", (err) => {
-      if (!err) {
-        bleno.setServices([
-          new bleno.PrimaryService({
-            uuid: SERVICE_UUID,
-            characteristics: [
-              new bleno.Characteristic({
-                uuid: DEVICE_ID_UUID,
-                properties: ["write", "notify"],
-                onWriteRequest: (data, offset, withoutResponse, callback) => {
-                  deviceId = data.toString("utf8");
-                  console.log("✅ Received Device ID:", deviceId);
-
-                  // Send ACK back
-                  callback(bleno.Characteristic.RESULT_SUCCESS);
-                },
-              }),
-
-              new bleno.Characteristic({
-                uuid: WIFI_CREDS_UUID,
-                properties: ["write", "notify"],
-                onWriteRequest: async (data, offset, withoutResponse, callback) => {
-                  try {
-                    const creds = JSON.parse(data.toString("utf8"));
-                    wifiCreds = { ssid: creds.ssid, password: creds.password };
-                    console.log("✅ Received WiFi Creds:", wifiCreds);
-
-                    // Attempt WiFi connection
-                    await WifiService.connect(wifiCreds.ssid, wifiCreds.password);
-
-                    console.log("📶 WiFi Connected!");
-                    callback(bleno.Characteristic.RESULT_SUCCESS);
-                  } catch (err) {
-                    console.error("❌ WiFi connect failed:", err);
-                    callback(bleno.Characteristic.RESULT_UNLIKELY_ERROR);
-                  }
-                },
-              }),
-            ],
-          }),
-        ]);
+      if (err) {
+        console.error("❌ Advertising start error:", err);
+        return;
       }
+      console.log("✅ Advertising started.");
+
+      bleno.setServices([
+        new bleno.PrimaryService({
+          uuid: SERVICE_UUID,
+          characteristics: [
+            new bleno.Characteristic({
+              uuid: DEVICE_ID_UUID,
+              properties: ["write", "notify"],
+              onWriteRequest: (data, offset, withoutResponse, callback) => {
+                deviceId = data.toString("utf8");
+                console.log("📲 Device connected & sent ID:", deviceId);
+                callback(bleno.Characteristic.RESULT_SUCCESS);
+              },
+            }),
+
+            new bleno.Characteristic({
+              uuid: WIFI_CREDS_UUID,
+              properties: ["write", "notify"],
+              onWriteRequest: async (data, offset, withoutResponse, callback) => {
+                try {
+                  const creds = JSON.parse(data.toString("utf8"));
+                  wifiCreds = { ssid: creds.ssid, password: creds.password };
+                  console.log("📶 Received WiFi Creds:", wifiCreds);
+
+                  // Attempt WiFi connection
+                  await WifiService.connect(wifiCreds.ssid, wifiCreds.password);
+                  console.log("✅ WiFi Connected!");
+                  callback(bleno.Characteristic.RESULT_SUCCESS);
+                } catch (err) {
+                  console.error("❌ WiFi connect failed:", err);
+                  callback(bleno.Characteristic.RESULT_UNLIKELY_ERROR);
+                }
+              },
+            }),
+          ],
+        }),
+      ]);
+    });
+
+    // Log when a device connects/disconnects
+    bleno.on("accept", (clientAddress) => {
+      console.log(`🔗 Central device connected: ${clientAddress}`);
+    });
+
+    bleno.on("disconnect", (clientAddress) => {
+      console.log(`❌ Central device disconnected: ${clientAddress}`);
     });
   }
 }
