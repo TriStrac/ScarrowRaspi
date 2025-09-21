@@ -6,23 +6,21 @@ import bleno from "@abandonware/bleno";
 import { WifiService } from "./wifi.service";
 import { exec } from "child_process";
 import { promisify } from "util";
-
-// UUIDs for BLE service and characteristics
-const DEVICE_ID_UUID = "12345678-1234-5678-1234-56789abcdef0";
-const WIFI_CREDS_UUID = "12345678-1234-5678-1234-56789abcdef1";
-const SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef9";
-
-// Bluetooth LE characteristic result codes
-const RESULT_SUCCESS = 0;
-const RESULT_INVALID_OFFSET = 1;
-const RESULT_INVALID_ATTRIBUTE_LENGTH = 2;
-const RESULT_UNLIKELY_ERROR = 3;
+import {
+    BlenoState,
+    WifiCredentials,
+    DEVICE_ID_UUID,
+    WIFI_CREDS_UUID,
+    SERVICE_UUID,
+    RESULT_SUCCESS,
+    RESULT_INVALID_OFFSET,
+    RESULT_INVALID_ATTRIBUTE_LENGTH,
+    RESULT_UNLIKELY_ERROR
+} from "../interface";
 
 // Store data globally to persist between connections
 let deviceId = "";
-let wifiCreds: { ssid: string; password: string } | null = null;
-
-type BlenoState = "unknown" | "resetting" | "unsupported" | "unauthorized" | "poweredOff" | "poweredOn";
+let wifiCreds: WifiCredentials | null = null;
 
 // Base class for BLE characteristics with result codes
 abstract class CustomCharacteristic extends bleno.Characteristic {
@@ -246,38 +244,4 @@ export class BluetoothService {
     public getWifiCreds(): { ssid: string; password: string } | null {
         return wifiCreds;
     }
-}
-
-// Type declaration for bleno module
-declare module '@abandonware/bleno' {
-    export interface Characteristic {
-        on(event: string, callback: Function): void;
-        notify(state: boolean): void;
-        RESULT_SUCCESS: number;
-        RESULT_INVALID_OFFSET: number;
-        RESULT_INVALID_ATTRIBUTE_LENGTH: number;
-        RESULT_UNLIKELY_ERROR: number;
-        onReadRequest?: (offset: number, callback: (result: number, data?: Buffer) => void) => void;
-        onWriteRequest?: (data: Buffer, offset: number, withoutResponse: boolean, callback: (result: number) => void) => void;
-    }
-
-    export class Characteristic {
-        constructor(options: {
-            uuid: string;
-            properties: string[];
-        });
-    }
-
-    export class PrimaryService {
-        constructor(options: {
-            uuid: string;
-            characteristics: Characteristic[];
-        });
-    }
-
-    export function startAdvertising(name: string, serviceUuids: string[]): void;
-    export function startAdvertisingWithEIRData(advertisementData: Buffer): void;
-    export function stopAdvertising(callback?: () => void): void;
-    export function setServices(services: PrimaryService[], callback?: (error?: Error) => void): void;
-    export function on(event: string, callback: Function): void;
 }
