@@ -1,4 +1,4 @@
-import bleno from "bleno";
+import bleno from "@abandonware/bleno";
 import { WifiService } from "./wifi.service";
 
 const DEVICE_ID_UUID = "12345678-1234-5678-1234-56789abcdef0";
