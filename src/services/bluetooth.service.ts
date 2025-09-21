@@ -24,11 +24,17 @@ export class BluetoothService {
 
     private async setupBluetooth() {
         try {
+            // Reset and configure BLE adapter
             await execAsync("sudo hciconfig hci0 down");
             await execAsync("sudo hciconfig hci0 up");
-            await execAsync("sudo btmgmt ssp off"); // Disable Secure Simple Pairing
-            await execAsync("sudo btmgmt pairable off");
+            await execAsync("sudo hciconfig hci0 leadv"); // Enable BLE advertising
+            await execAsync("sudo hciconfig hci0 noscan"); // Disable scanning
+            await execAsync("sudo btmgmt le on"); // Enable BLE
+            await execAsync("sudo btmgmt bredr off"); // Disable classic Bluetooth
+            await execAsync("sudo btmgmt power on"); // Ensure powered on
             await execAsync("sudo btmgmt connectable on");
+            await execAsync("sudo btmgmt discov on"); // Make discoverable
+            await execAsync("sudo btmgmt advertising on"); // Enable advertising
             await execAsync("sudo bt-device -l | cut -d ' ' -f 3 | xargs -I {} sudo bt-device -r {}"); // Remove all paired devices
         } catch (error) {
             console.log("Some Bluetooth setup commands failed, continuing anyway...");
@@ -79,9 +85,28 @@ export class BluetoothService {
 
     private stopAdvertising() {
         if (this.isAdvertising) {
-            this.isAdvertising = false;
-            bleno.stopAdvertising();
-            console.log("📶 Stopped advertising");
+            try {
+                this.isAdvertising = false;
+                bleno.stopAdvertising();
+                console.log("📶 Stopped advertising");
+            } catch (error) {
+                console.error("❌ Error stopping advertising:", error);
+            }
+        }
+    }
+
+    private async checkBluetoothStatus() {
+        try {
+            const { stdout } = await execAsync("hciconfig hci0");
+            console.log("🔍 Bluetooth adapter status:", stdout);
+            
+            const { stdout: devices } = await execAsync("sudo hcitool dev");
+            console.log("📱 Available Bluetooth devices:", devices);
+            
+            const { stdout: scan } = await execAsync("sudo hcitool lescan --duplicates");
+            console.log("🔎 BLE scan results:", scan);
+        } catch (error) {
+            console.error("❌ Error checking Bluetooth status:", error);
         }
     }
 
@@ -98,18 +123,50 @@ export class BluetoothService {
     }
 
     public async start() {
-        process.env.BLENO_ADVERTISING_INTERVAL = "300";
-        process.env.NOBLE_REPORT_ALL_HCI_EVENTS = "0";
+        // Set shorter advertising interval for better visibility
+        process.env.BLENO_ADVERTISING_INTERVAL = "100";
+        process.env.NOBLE_REPORT_ALL_HCI_EVENTS = "1"; // Enable all HCI events for debugging
 
+        console.log("🚀 Starting Bluetooth service...");
         await this.setupBluetooth();
+        await this.checkBluetoothStatus();
 
         bleno.on("stateChange", async (state: BlenoState) => {
             console.log("🔄 Bluetooth state:", state);
             
             if (state === "poweredOn" && !this.isAdvertising) {
+                console.log("🔵 Starting BLE advertising...");
                 this.isAdvertising = true;
-                bleno.startAdvertising(BT_CONFIG.deviceName, [BT_CONFIG.serviceUuid]);
+                const advertisementData = {
+                    localName: BT_CONFIG.deviceName,
+                    serviceUuids: [BT_CONFIG.serviceUuid],
+                    manufacturerData: Buffer.from([0x01]), // Add some manufacturer data
+                    txPowerLevel: 127 // Maximum power level for better visibility
+                };
+                
+                bleno.startAdvertisingWithEIRData(
+                    Buffer.from([
+                        // Flags
+                        0x02, // Length
+                        0x01, // Type: Flags
+                        0x06, // Data: LE General Discoverable Mode + BR/EDR Not Supported
+                        
+                        // Complete Local Name
+                        BT_CONFIG.deviceName.length + 1, // Length
+                        0x09, // Type: Complete Local Name
+                        ...Buffer.from(BT_CONFIG.deviceName)
+                    ]),
+                    Buffer.from([
+                        // Service UUID List
+                        17, // Length (16 bytes UUID + 1 byte type)
+                        0x07, // Type: Complete 128-bit Service UUIDs
+                        ...Buffer.from(BT_CONFIG.serviceUuid.replace(/-/g, ''), 'hex')
+                    ])
+                );
+                
+                console.log("✨ Advertisement data set:", advertisementData);
             } else if (state !== "poweredOn") {
+                console.log("❌ Bluetooth not powered on, stopping advertising");
                 this.stopAdvertising();
             }
         });
