@@ -26,38 +26,97 @@ export class BluetoothService {
         try {
             console.log("🔄 Setting up Bluetooth...");
             
-            // Start bluetooth service
-            await execAsync("sudo systemctl start bluetooth");
-            await execAsync("sleep 2"); // Give bluetooth service time to start
-            
-            // First, remove any existing pairings
-            await execAsync("sudo rm -rf /var/lib/bluetooth/*");
-            await execAsync("sudo systemctl restart bluetooth");
+            // Kill any existing bluetooth processes
+            console.log("Cleaning up existing bluetooth processes...");
+            await execAsync("sudo pkill -f bt-agent");
+            await execAsync("sudo pkill -f bluetoothd");
             await execAsync("sleep 2");
             
-            // Create a script with all the bluetoothctl commands
-            const script = [
+            // Start fresh bluetooth service
+            console.log("Starting bluetooth service...");
+            await execAsync("sudo systemctl start bluetooth");
+            await execAsync("sleep 3");
+            
+            // Remove existing pairings
+            console.log("Removing existing pairings...");
+            await execAsync("sudo rm -rf /var/lib/bluetooth/*");
+            await execAsync("sudo systemctl restart bluetooth");
+            await execAsync("sleep 3");
+            
+            // Setup automatic pairing agent first
+            console.log("Starting automatic pairing agent...");
+            await execAsync("sudo bt-agent -c NoInputNoOutput -p /usr/bin/bt-agent-helper");
+            await execAsync("sleep 1");
+            
+            // Now configure bluetoothctl
+            console.log("Configuring bluetooth settings...");
+            const commands = [
                 "power on",
-                "agent NoInputNoOutput", // This is key - no confirmation needed
+                "agent NoInputNoOutput",
                 "default-agent",
                 `rename ${BT_CONFIG.deviceName}`,
                 "discoverable on",
                 "pairable on",
-                "trust *", // Auto-trust any device that tries to pair
-                "yes" // Auto-confirm any pairing request
-            ].join("\\n");
+                "agent on",
+                "trust *"
+            ];
             
-            // Execute all commands at once in bluetoothctl
-            await execAsync(`echo -e "${script}" | sudo bluetoothctl`);
+            // Execute each command individually and show output
+            for (const cmd of commands) {
+                console.log(`Running: ${cmd}`);
+                const { stdout } = await execAsync(`echo "${cmd}" | sudo bluetoothctl`);
+                console.log("Output:", stdout);
+                await execAsync("sleep 1");
+            }
             
-            // Start the automatic pairing agent in the background
-            await execAsync("sudo bt-agent --capability=NoInputNoOutput --auto-confirm=true &");
+            // Final setup - make sure auto pairing is enabled with detailed script
+            console.log("Setting up automatic pairing...");
+            const agentScript = `#!/bin/bash
+# Auto-confirm pairing helper script
+# This script will automatically confirm any pairing request
+while true; do
+    if [ "$1" = "request" ]; then
+        echo "Automatically confirming pairing request"
+        echo "true"
+        exit 0
+    fi
+    if [ "$1" = "authorize" ]; then
+        echo "Automatically authorizing device"
+        echo "true"
+        exit 0
+    fi
+    if [ "$1" = "confirm" ]; then
+        echo "Automatically confirming passkey"
+        echo "true"
+        exit 0
+    fi
+    # Default response for any other request
+    echo "true"
+    exit 0
+done`;
+            
+            await execAsync(`sudo bash -c 'echo "${agentScript}" > /usr/bin/bt-agent-helper'`);
+            await execAsync("sudo chmod +x /usr/bin/bt-agent-helper");
             
             console.log("✅ Bluetooth setup complete - Ready for pairing");
             console.log("📱 Device name:", BT_CONFIG.deviceName);
             console.log("🔵 Auto-accepting all pairing requests");
+            
+            // Show current bluetooth status and controller info
+            const { stdout: status } = await execAsync("sudo bluetoothctl show");
+            console.log("Current Bluetooth Status:", status);
+            
+            // Additional verification
+            const { stdout: controller } = await execAsync("sudo bluetoothctl list");
+            console.log("Available Controllers:", controller);
+            
+            // Verify agent is running
+            const { stdout: agent } = await execAsync("ps aux | grep bt-agent");
+            console.log("Agent Status:", agent);
+            
         } catch (error) {
             console.error("❌ Error in Bluetooth setup:", error);
+            console.error("Error details:", error);
             throw error;
         }
     }
@@ -120,12 +179,26 @@ export class BluetoothService {
         console.log("🚀 Starting Bluetooth service...");
         
         try {
+            // First attempt
+            console.log("First attempt at Bluetooth setup...");
             await this.setupBluetooth();
         } catch (error) {
-            console.error("Failed to setup Bluetooth. Retrying in 5 seconds...");
-            // Wait 5 seconds and try again
-            await execAsync("sleep 5");
-            await this.setupBluetooth();
+            console.error("First attempt failed:", error);
+            console.log("Waiting 5 seconds before retry...");
+            
+            try {
+                // Kill everything and wait
+                await execAsync("sudo pkill -f bt-agent");
+                await execAsync("sudo pkill -f bluetoothd");
+                await execAsync("sleep 5");
+                
+                // Second attempt
+                console.log("Second attempt at Bluetooth setup...");
+                await this.setupBluetooth();
+            } catch (retryError) {
+                console.error("Both setup attempts failed. Final error:", retryError);
+                throw retryError;
+            }
         }
 
         bleno.on("stateChange", async (state: BlenoState) => {
